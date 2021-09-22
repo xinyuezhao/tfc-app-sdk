@@ -3,81 +3,254 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 
 	tfe "github.com/hashicorp/go-tfe"
+	"github.com/manifoldco/promptui"
 )
 
 func main() {
+	prompt := promptui.Prompt{
+		Label: "Please enter your user token",
+	}
+	result, err := prompt.Run()
+
+	if err != nil {
+		fmt.Printf("Prompt failed %v\n", err)
+		return
+	}
+
 	config := &tfe.Config{
-		Token: "ai1yMKOzv3Mptg.atlasv1.lOseEHJzlB49Vz0fXTlFUFRGGTuugiP3040sr1MGGOkHgRqzQ9FrpiUJzyTH1DzzFTM",
+		Token: result,
 	}
 
 	client, err := tfe.NewClient(config)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("Authentication failed %v\n", err)
 	}
+
+	fmt.Printf("Query all organizations\n")
 
 	// Create a context
 	ctx := context.Background()
 
-	// Query all organizations
+	// Query all organizations under current user and filter by entitlements
+	orgs, err := queryAllOrgs(client, ctx)
+	// for _, org := range orgs {
+	// 	fmt.Println(org)
+	// }
+
+	// Select an organization
+	selector := promptui.Select{
+		Label: "Select an organization",
+		Items: orgs,
+	}
+	_, orgName, err := selector.Run()
+
+	if err != nil {
+		fmt.Printf(fmt.Sprintf("Prompt failed %v\n", err))
+		return
+	}
+
+	fmt.Printf(fmt.Sprintf("Choose organization %v\n", orgName))
+
+	fmt.Printf(fmt.Sprintf("Add a new agent for organization %v", orgName))
+
+	var choosenAgentPl *tfe.AgentPool
+	// Choose to use existing agentPools or creating a new agentPools
+	selectAgentPool := promptui.Select{
+		Label: "Add agent to an angentPool",
+		Items: []string{"Choose from existing agentPools", "Create a new agentPool"},
+	}
+	_, agentPool, err := selectAgentPool.Run()
+
+	if err != nil {
+		fmt.Printf("Prompt failed %v\n", err)
+		return
+	}
+
+	if agentPool == "Choose from existing agentPools" {
+		agentPools, _ := queryAgentPools(client, ctx, orgName)
+		var agentPoolsName []string
+		for _, agentPool := range agentPools {
+			agentPoolsName = append(agentPoolsName, agentPool.Name)
+		}
+		selectAgentName := promptui.Select{
+			Label: "Choose from below agentPools",
+			Items: agentPoolsName,
+		}
+		_, agentName, err := selectAgentName.Run()
+		if err != nil {
+			fmt.Printf("Prompt failed %v\n", err)
+			return
+		}
+		// query agentPool
+		agentPl, err := queryAgentPool(agentPools, agentName)
+		if err != nil {
+			fmt.Printf(fmt.Sprintf("Query agentPool %v failed\n", agentName))
+		}
+		fmt.Println(fmt.Sprintf("Choose agentPool %v", agentName))
+		choosenAgentPl = agentPl
+	} else {
+		// enter name for new agentPool
+		prompt := promptui.Prompt{
+			Label: "Enter name for new agentPool",
+		}
+		agentName, err := prompt.Run()
+
+		if err != nil {
+			fmt.Printf(fmt.Sprintf("Prompt failed %v\n", err))
+		}
+		agentPl, err := createAgentPool(client, ctx, orgName, agentName)
+		if err != nil {
+			fmt.Printf(fmt.Sprintf("Creating agentPool failed %v\n", err))
+		}
+		fmt.Println(fmt.Sprintf("New agentPool %v created", agentPl.Name))
+		choosenAgentPl = agentPl
+	}
+
+	fmt.Println(fmt.Sprintf("Adding a new agent token in agentpool %v", choosenAgentPl.Name))
+
+	descPrompt := promptui.Prompt{
+		Label: "Enter description for new agent token",
+	}
+	desc, err := descPrompt.Run()
+	if err != nil {
+		fmt.Printf(fmt.Sprintf("Prompt failed %v\n", err))
+	}
+	// Create a new AgentToken in choosed AgentPool
+	agentToken, err := createAgentToken(client, ctx, choosenAgentPl, desc)
+	fmt.Println(fmt.Sprintf("New agent token %v created", agentToken.Description))
+
+	// Query existing Agent Tokens for choosed AgentPool
+	agentTokens, err := queryAgentTokens(client, ctx, choosenAgentPl)
+	fmt.Println(fmt.Sprintf("List all agent tokens in agent pool %v", choosenAgentPl.Name))
+	for _, agentToken := range agentTokens {
+		fmt.Println(fmt.Sprintf("AgentToken description %v", agentToken.Description))
+	}
+
+	// // Query entitlement for each organization
+	// for _, element := range orgs.Items {
+	// 	fmt.Println(element.Name)
+	// 	entitlements, err := client.Organizations.Entitlements(ctx, element.Name)
+	// 	if err != nil {
+	// 		log.Fatal(err)
+	// 	}
+	// 	fmt.Println(fmt.Sprintf("Entitlement of organization %v is %v", element.Name, entitlements.Agents))
+	// }
+	// 	// Query all agent pools for cisco-dcn-ecosystem
+	// 	ecosystemOrg := orgs.Items[0]
+	// 	agentPools, err := client.AgentPools.List(ctx, ecosystemOrg.Name, tfe.AgentPoolListOptions{})
+	// 	if err != nil {
+	// 		log.Fatal(err)
+	// 	}
+	// 	for _, agentPool := range agentPools.Items {
+	// 		if err != nil {
+	// 			log.Fatal(err)
+	// 		}
+	// 		fmt.Println(fmt.Sprintf("AgentPool name is: %v, ID is %v", agentPool.Name, agentPool.ID))
+	// 	}
+
+	// 	// Create a new agentpool in cisco-dcn-ecosystem
+	// 	agentName := "tfc_nd_test"
+	// 	createOptions := tfe.AgentPoolCreateOptions{Name: &agentName}
+	// 	agentPl, err := client.AgentPools.Create(ctx, ecosystemOrg.Name, createOptions)
+	// 	if err != nil {
+	// 		log.Fatal(err)
+	// 	}
+	// 	fmt.Println(fmt.Sprintf("AgentPool %v created", agentPl.Name))
+
+	// 	// Query existing Agent Tokens for AgentPool 'ams-lab'
+	// 	agentPlAmsLabID := agentPools.Items[2].ID
+	// 	// fmt.Println(agentPools.Items[2].Name)
+	// 	agentTokens, err := client.AgentTokens.List(ctx, agentPlAmsLabID)
+	// 	if err != nil {
+	// 		log.Fatal(err)
+	// 	}
+	// 	// fmt.Println(agentTokens)
+	// 	for _, agentToken := range agentTokens.Items {
+	// 		if err != nil {
+	// 			log.Fatal(err)
+	// 		}
+	// 		fmt.Println(fmt.Sprintf("AgentToken ID is %v, token is %v, created at %v", agentToken.ID, agentToken.Token, agentToken.CreatedAt))
+	// 	}
+
+	// 	// Create new Agent Token in AgentPool 'tfc_nd_test'
+	// 	desc := "New AgentToken"
+	// 	agentTokenNew, err := client.AgentTokens.Generate(ctx, agentPl.ID, tfe.AgentTokenGenerateOptions{Description: &desc})
+	// 	if err != nil {
+	// 		log.Fatal(err)
+	// 	}
+	// 	fmt.Println(fmt.Sprintf("AgentToken %v created at %v with description %v", agentTokenNew.ID, agentTokenNew.CreatedAt, agentTokenNew.Description))
+}
+
+// Query all orgs' name under current user
+func queryAllOrgs(client *tfe.Client, ctx context.Context) ([]string, error) {
+	var res []string
 	orgs, err := client.Organizations.List(ctx, tfe.OrganizationListOptions{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-
-	// Query entitlement for each organization
+	// filter orgs by entitlement
 	for _, element := range orgs.Items {
-		fmt.Println(element.Name)
+		// fmt.Println(element.Name)
 		entitlements, err := client.Organizations.Entitlements(ctx, element.Name)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
-		fmt.Println(fmt.Sprintf("Entitlement of organization %v is %v", element.Name, entitlements.Agents))
-	}
-	// Query all agent pools for cisco-dcn-ecosystem
-	ecosystemOrg := orgs.Items[0]
-	agentPools, err := client.AgentPools.List(ctx, ecosystemOrg.Name, tfe.AgentPoolListOptions{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, agentPool := range agentPools.Items {
-		if err != nil {
-			log.Fatal(err)
+		if entitlements.Agents {
+			res = append(res, element.Name)
 		}
-		fmt.Println(fmt.Sprintf("AgentPool name is: %v, ID is %v", agentPool.Name, agentPool.ID))
+		// fmt.Println(fmt.Sprintf("Entitlement of organization %v is %v", element.Name, entitlements.Agents))
 	}
+	return res, err
+}
 
-	// Create a new agentpool in cisco-dcn-ecosystem
-	agentName := "tfc_nd_test"
-	createOptions := tfe.AgentPoolCreateOptions{Name: &agentName}
-	agentPl, err := client.AgentPools.Create(ctx, ecosystemOrg.Name, createOptions)
+// Query all agentPools for an organization
+func queryAgentPools(client *tfe.Client, ctx context.Context, name string) ([]*tfe.AgentPool, error) {
+	agentPools, err := client.AgentPools.List(ctx, name, tfe.AgentPoolListOptions{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	fmt.Println(fmt.Sprintf("AgentPool %v created", agentPl.Name))
+	res := agentPools.Items
+	return res, nil
+}
 
-	// Query existing Agent Tokens for AgentPool 'ams-lab'
-	agentPlAmsLabID := agentPools.Items[2].ID
-	// fmt.Println(agentPools.Items[2].Name)
-	agentTokens, err := client.AgentTokens.List(ctx, agentPlAmsLabID)
+// Create a new agentPool for an organization
+func createAgentPool(client *tfe.Client, ctx context.Context, orgName string, agentPlName string) (*tfe.AgentPool, error) {
+	createOptions := tfe.AgentPoolCreateOptions{Name: &agentPlName}
+	agentPl, err := client.AgentPools.Create(ctx, orgName, createOptions)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	// fmt.Println(agentTokens)
-	for _, agentToken := range agentTokens.Items {
-		if err != nil {
-			log.Fatal(err)
+	return agentPl, nil
+}
+
+// Query agentPool by the name
+func queryAgentPool(agentPools []*tfe.AgentPool, name string) (*tfe.AgentPool, error) {
+	for _, agentPl := range agentPools {
+		if agentPl.Name == name {
+			return agentPl, nil
 		}
-		fmt.Println(fmt.Sprintf("AgentToken ID is %v, token is %v, created at %v", agentToken.ID, agentToken.Token, agentToken.CreatedAt))
 	}
+	return nil, fmt.Errorf(fmt.Sprintf("There is no agentPool named %v", name))
+}
 
-	// Create new Agent Token in AgentPool 'tfc_nd_test'
-	desc := "New AgentToken"
-	agentTokenNew, err := client.AgentTokens.Generate(ctx, agentPl.ID, tfe.AgentTokenGenerateOptions{Description: &desc})
+// Query AgentTokens in an agentPool
+func queryAgentTokens(client *tfe.Client, ctx context.Context, agentPl *tfe.AgentPool) ([]*tfe.AgentToken, error) {
+	agentTokens, err := client.AgentTokens.List(ctx, agentPl.ID)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("Query agentTokens failed\n")
+		return nil, err
 	}
-	fmt.Println(fmt.Sprintf("AgentToken %v created at %v with description %v", agentTokenNew.ID, agentTokenNew.CreatedAt, agentTokenNew.Description))
+	res := agentTokens.Items
+	return res, nil
+}
+
+// Create a new agentToken in an agentPool
+func createAgentToken(client *tfe.Client, ctx context.Context, agentPl *tfe.AgentPool, desc string) (*tfe.AgentToken, error) {
+	agentToken, err := client.AgentTokens.Generate(ctx, agentPl.ID, tfe.AgentTokenGenerateOptions{Description: &desc})
+	if err != nil {
+		return nil, err
+	}
+	return agentToken, nil
 }
