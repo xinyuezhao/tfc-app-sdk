@@ -197,5 +197,26 @@ func createAgentToken(client *tfe.Client, ctx context.Context, agentPl *tfe.Agen
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println(fmt.Sprintf("agent token created: %v", agentToken.Token))
 	return agentToken, nil
+}
+
+// Delete an existing agentToken
+func removeAgentToken(client *tfe.Client, ctx context.Context, agentToken *tfe.AgentToken) error {
+	err := client.AgentTokens.Delete(ctx, agentToken.ID)
+	if err != nil {
+		return err
+	}
+	fmt.Println(fmt.Sprintf("AgentToken %v was deleted", agentToken.Description))
+	return nil
+}
+
+// Delete an existing agentPool
+func removeAgentPool(client *tfe.Client, ctx context.Context, agentPl *tfe.AgentPool) error {
+	err := client.AgentPools.Delete(ctx, agentPl.ID)
+	if err != nil {
+		return err
+	}
+	fmt.Println(fmt.Sprintf("AgentPool %v was deleted", agentPl.Name))
+	return nil
 }
