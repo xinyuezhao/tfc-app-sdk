@@ -105,20 +105,70 @@ func main() {
 		choosenAgentPl = agentPl
 	}
 
-	fmt.Println(fmt.Sprintf("Adding a new agent token in agentpool %v", choosenAgentPl.Name))
-
-	// Enter description for created agenttoken
-	descPrompt := promptui.Prompt{
-		Label: "Enter description for new agent token",
+	// Choose to create a new agentToken or deleting an existing agentToken or query all existing agentTokens
+	selectOption := promptui.Select{
+		Label: fmt.Sprintf("Choose option for agentPool %v", choosenAgentPl.Name),
+		Items: []string{"Create a new agentToken", "Delete an existing agentToken", "Query all existing agentTokens"},
 	}
-	desc, err := descPrompt.Run()
+	_, option, err := selectOption.Run()
+
 	if err != nil {
-		fmt.Printf(fmt.Sprintf("Prompt failed %v\n", err))
+		fmt.Printf("Prompt failed %v\n", err)
+		return
 	}
 
-	// Create a new AgentToken in choosed AgentPool
-	agentToken, err := createAgentToken(client, ctx, choosenAgentPl, desc)
-	fmt.Println(fmt.Sprintf("New agent token %v created", agentToken.Description))
+	if option == "Create a new agentToken" {
+		fmt.Println(fmt.Sprintf("Adding a new agent token in agentpool %v", choosenAgentPl.Name))
+
+		// Enter description for created agentToken
+		descPrompt := promptui.Prompt{
+			Label: "Enter description for new agent token",
+		}
+		desc, err := descPrompt.Run()
+		if err != nil {
+			fmt.Printf(fmt.Sprintf("Prompt failed %v\n", err))
+		}
+
+		// Create a new AgentToken in choosed AgentPool
+		agentToken, err := createAgentToken(client, ctx, choosenAgentPl, desc)
+		fmt.Println(fmt.Sprintf("New agent token %v created", agentToken.Description))
+	} else {
+		// query all agentTokens in choosed AgentPool
+		agentTokens, err := queryAgentTokens(client, ctx, choosenAgentPl)
+		if err != nil {
+			fmt.Printf(fmt.Sprintf("Query agentTokens failed %v\n", err))
+		}
+		// var agentTokensDesc []string
+		// for _, agentToken := range agentTokens {
+		// 	agentTokensDesc = append(agentTokensDesc, agentToken.Description)
+		// }
+
+		if option == "Delete an existing agentToken" {
+			fmt.Println(fmt.Sprintf("Deleting an existing agent token in agentpool %v", choosenAgentPl.Name))
+			templates := &promptui.SelectTemplates{
+				Label:    "{{ . }}?",
+				Active:   "> AgentToken description: {{ .Description | cyan }}, ID: {{ .ID | red }}",
+				Inactive: "AgentToken description: {{ .Description }}, ID: {{ .ID }}",
+			}
+			selectToken := promptui.Select{
+				Label:     fmt.Sprintf("Choose option for agentPool %v", choosenAgentPl.Name),
+				Templates: templates,
+				Items:     agentTokens,
+			}
+			i, _, err := selectToken.Run()
+			if err != nil {
+				fmt.Printf("Prompt failed %v\n", err)
+				return
+			}
+			removeAgentToken(client, ctx, agentTokens[i])
+			// check whether the AgentPool is empty, delete the AgentPool if yes
+			tokensAfterDelete, err := queryAgentTokens(client, ctx, choosenAgentPl)
+			if len(tokensAfterDelete) == 0 {
+				fmt.Println(fmt.Sprintf("Deleting AgentPool %v as it is empty", choosenAgentPl.Name))
+				removeAgentPool(client, ctx, choosenAgentPl)
+			}
+		}
+	}
 
 	// Query existing Agent Tokens for choosed AgentPool
 	agentTokens, err := queryAgentTokens(client, ctx, choosenAgentPl)
